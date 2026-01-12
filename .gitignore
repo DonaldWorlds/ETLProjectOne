@@ -1,0 +1,63 @@
+# DATA FILES (NEVER COMMIT RAW/STAGING DATA)
+data/raw_data/
+data/staging/
+*.csv
+*.parquet
+*.json
+!config/*.json
+
+# CREDENTIALS & SECRETS (CRITICAL)
+.env
+.env.local
+.env.production
+secrets/
+credentials/
+*.json.key
+*service-account*.json
+gcp-credentials.json
+
+# PYTHON
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+*.egg-info/
+dist/
+build/
+
+# IDE & EDITORS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# LOGS
+logs/
+*.log
+
+# DATABASE
+*.db
+*.sqlite
+*.sqlite3
+
+# JUPYTER NOTEBOOKS
+.ipynb_checkpoints/
+# *.ipynb  # Uncomment if you don't want notebooks in repo
+
+# Tests
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.ruff_cache/
+
+# OS SPECIFIC
+.DS_Store
+Thumbs.db
+desktop.ini
