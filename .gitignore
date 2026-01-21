@@ -1,10 +1,13 @@
 # DATA FILES (NEVER COMMIT RAW/STAGING DATA)
 data/raw_data/
 data/staging/
+data/temp/
 *.csv
 *.parquet
 *.json
 !config/*.json
+!data/README.md
+
 
 # CREDENTIALS & SECRETS (CRITICAL)
 .env
@@ -29,6 +32,12 @@ ENV/
 *.egg-info/
 dist/
 build/
+
+# Ignore metadata contents
+metadata/*
+!metadata/README.md
+
+notes/*
 
 # IDE & EDITORS
 .vscode/

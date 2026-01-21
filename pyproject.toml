@@ -1,8 +1,9 @@
 [tool.poetry]
-name = "elt-projectone"
+name = "ETL-ProjectOne"
 version = "0.1.0"
 description = "NBA ETL Project"
 authors = ["Donald Withespoon"]
+packages = [{include = "etl_project_package", from = "src"}]
 readme = "README.md"
 
 [tool.poetry.dependencies]
