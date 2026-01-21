@@ -239,6 +239,7 @@ ETL-ProjectOne/
     - `log_decision` (structure of Markdown output)
   - Integration test:
     - End‑to‑end `cron_run` using temporary directories and mocked Kaggle downloads.
+    - Data Snapshot update
 
 - **Developer Experience**
   - Add example commands and expected output to help new contributors run:
