@@ -1,18 +1,22 @@
-data/
+***
+## Updated `data/` README
 
-This directory contains **runtime data only**.
+### `data/` Directory
 
-Nothing in this directory is committed to version control.
 
-## Subdirectories
 
-- raw/ Immutable source snapshots
-- staging/ Cleaned and standardized data
-- temp/ Temporary downloads
-- archive/ Compressed historical snapshots
+- `data/temp/` — versioned raw Kaggle snapshots created per run:
+  - `v8_nbadataset_temp_data/`
+  - `v9_nbadataset_temp_data/`
+  - `v10_nbadataset_temp_data/`
+- Older versions are removed automatically on `ingest` by `cleanup_temp_on_ingest(...)`.
 
-## Rules
+Rules:
 
-- Raw data is never modified
-- Staging data can be regenerated
-- All data is reproducible via the ETL system
+- Raw snapshots in `data/temp/` are treated as immutable.
+- The same Kaggle dataset downloaded on different days may appear as multiple versions; the ETL compares them using hashes and row counts rather than trusting filenames or timestamps.
+- Everything in `data/` is reproducible by rerunning the ETL with the same source dataset.
+
+(Namespaces like `raw/`, `staging/`, `archive/` are planned for later phases; for now only `temp/` is used.)
+
+***

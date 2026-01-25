@@ -1,272 +1,220 @@
-***
 
-# NBA Dataset ETL — Systems Thinking Project
+### NBA Dataset ETL — Systems Thinking Project
 
-## Overview (Business First)
+#### Overview (Business First)
 
-This project is a **systems‑thinking, back‑end data engineering project** built around the open Kaggle dataset:
+This project is a **systems‑thinking, back‑end data engineering project** built around the Kaggle dataset:
 
-> **Historical NBA Data and Player Box Scores** (eoinamoore/historical-nba-data-and-player-box-scores)
+> Historical NBA Data and Player Box Scores (eoinamoore/historical-nba-data-and-player-box-scores) [github](https://github.com/nogibjj/Rmr62DataBricksEtl)
 
-Goal: design and implement a **production‑style ETL system** that mirrors how real analytics platforms ingest, validate, audit, and serve data over time.
+The goal is to implement a **production‑style ETL system** that behaves like a real analytics platform: it ingests, validates, audits, and reuses data over time instead of just running a one‑off script. [neptune](https://neptune.ai/blog/build-etl-data-pipeline-in-ml)
 
-This project intentionally emphasizes:
+The system emphasizes:
+
 - Deterministic batch processing
 - Auditability and recoverability
-- Separation of concerns (ingestion vs transformation vs analytics)
-- Long‑lived systems over one‑off scripts
+- Separation of concerns (ingestion vs comparison vs logging)
+- Long‑lived, self‑managing runs instead of ad‑hoc notebooks
 
 ***
 
-## What Problem This Project Solves
+### What Problem This Project Solves
 
-Real businesses rely on **continuously updating external data sources** that are:
-
-- Large
-- Imperfect or noisy
-- Occasionally corrected retroactively
-- Outside their control
-
-This project is designed to answer core operational questions:
+Real systems depend on **continuously updating external data sources** that are large, noisy, and occasionally corrected after the fact. This project answers operational questions such as: [neptune](https://neptune.ai/blog/build-etl-data-pipeline-in-ml)
 
 - Has the source data changed since the last run?
-- What exactly changed?
-- When did it change?
+- Exactly which files changed (hash or row count)?
+- When did they change?
 - Can we prove what we loaded and why?
-- Can we safely re‑run or recover the pipeline without corrupting state?
+- Can we safely re‑run without corrupting the baseline?
 
-The NBA dataset acts as a **stand‑in for real enterprise feeds**, such as:
+The NBA dataset stands in for feeds like:
 
-- Sportsbook or odds feeds
-- Financial market data
-- E‑commerce transaction exports
-- Vendor‑delivered CSV drops (SFTP, S3, email attachments, etc.)
+- Sportsbook / odds feeds
+- Market data exports
+- Vendor CSV drops (S3, SFTP, email)
+- Any recurring external CSV delivery
 
 ***
 
-## System‑Level Architecture (Macro View)
+### System‑Level Architecture (Macro View)
 
-This is a **batch‑first ETL system** designed to later evolve into a dynamic platform.
+This is a **batch‑first ETL system** with versioned snapshots and explicit metadata.
 
 ```text
 Kaggle Dataset (External Source)
         ↓
-Smart Ingestion (Change Detection)
+Cron / CLI Trigger
         ↓
-Raw Zone (Immutable Snapshots under data/temp/)
+Download into data/temp/vN_nbadataset_temp_data/
         ↓
-Staging / Cleaning (Standardization & Validation)
+compare_and_decide (hash + row_count comparison)
         ↓
-Analytical Warehouse (BigQuery / Postgres - planned)
+Decision: ingest / skip / alert
         ↓
-Downstream Systems (APIs, ML, BI - planned)
+On ingest:
+  - Save hashes + row_counts → metadata/
+  - Append run details → ingestion_log.md
+  - Delete oldest temp version
+On skip:
+  - Log the run, keep current temp version
 ```
 
-Key architectural ideas:
+Key ideas:
 
-- **No silent overwrites** of raw data
-- **Append‑only facts** and logs
-- **Explicit state and metadata** (hashes, row counts, versions)
-- **Every run is explainable** via a human‑readable ingestion log
-
-***
-
-## Core Concepts
-
-### 1. Batch Thinking
-
-All processing happens in **discrete, repeatable batches** with:
-
-- A defined input (a versioned snapshot under `data/temp/`)
-- A defined output (decision + updated metadata)
-- A recorded decision in `metadata/ingestion_log.md`
-
-### 2. Cron as the Heartbeat
-
-Cron does **one job**:
-
-> Trigger the system on a schedule.
-
-All intelligence lives in Python:
-
-- Downloading the latest dataset from Kaggle
-- Detecting whether data changed vs the previous baseline
-- Deciding whether to ingest, skip, or alert
-- Recording outcomes in an append‑only Markdown log
-
-This converts scripts into a **living system** rather than a one‑off notebook.
-
-### 3. Smart Ingestion (Change Detection)
-
-Because the dataset is large, the system **never blindly reloads** it.
-
-Instead, it:
-
-- Establishes an initial baseline snapshot
-- Computes file‑level hashes and row counts
-- Stores metadata about prior runs under `metadata/`
-- Compares **current** vs **previous** state
-
-The change detection engine can return one of three decisions:
-
-- `ingest` → new or corrected data detected; safe to proceed
-- `skip` → no meaningful change; cheap exit
-- `alert` → schema changes, missing files, or suspicious conditions
-
-The system behaves like a real data platform:
-
-- **Stateful**: remembers previous state via hashes & row counts
-- **Auditable**: each run is logged in Markdown with comparison details
-- **Recoverable**: re‑runs don’t corrupt baselines
-- **Extensible**: later phases can add APIs, ML, and BI downstream
-
-### 4. Future Phases (Planned)
-
-Built intentionally as a foundation for:
-
-- FastAPI for manual triggers and run observability
-- Dimensional modeling for analytics in a warehouse
-- ML systems consuming cleaned, conformed data
+- No silent overwrites of raw snapshots under `data/temp/`
+- Append‑only, human‑readable log (`metadata/ingestion_log.md`)
+- Explicit state (`metadata/hashes/`, `metadata/row_counts/`)
+- Every run is explainable from metadata alone
 
 ***
 
-## Tooling Philosophy (Why These Choices)
+### Core Concepts
 
-- **Python** — control plane and business logic
-- **Polars** — fast, memory‑efficient dataframe operations
-- **Postgres / BigQuery** — analytical storage (planned targets)
-- **Cron** — deterministic scheduling and simple orchestration
-- **Metadata files and tables** — the system’s “memory” (hashes, row counts, logs)
+#### 1. Batch Thinking
+
+Each run is a **batch** with:
+
+- Input: one versioned folder under `data/temp/` (for example `v10_nbadataset_temp_data/`)
+- Output: a decision (`ingest`, `skip`, or `alert`) plus updated metadata
+- A logged Markdown section with a per‑file comparison table
+
+#### 2. Cron as Heartbeat (or Manual CLI)
+
+The main entrypoint is:
+
+```bash
+poetry run python -m src.etl_project_package.main
+```
+
+`cron_run(project_root)`:
+
+- Picks the next version name (vN)
+- Downloads the Kaggle dataset into `data/temp/vN_nbadataset_temp_data/`
+- Calls `compare_and_decide(...)`
+- Logs the decision
+- On `ingest`, saves state + deletes the oldest complete version
+
+You can wire this to cron, e.g. every 6 hours:
+
+```bash
+0 */6 * * * cd /path/to/ETL-ProjectOne && poetry run python -m src.etl_project_package.main
+```
+
+#### 3. Smart Ingestion (Change Detection)
+
+On each run, the system:
+
+- Reads previous hashes + row counts from `metadata/hashes/` and `metadata/row_counts/`
+- Computes current hashes + row counts from the new temp folder
+- Compares previous vs current per file
+- Applies clear rules:
+
+- `ingest`  
+  - First‑ever run (no previous state), or  
+  - At least one file’s content changed (hash mismatch) or row count changed safely
+- `skip`  
+  - All 7 core CSVs have identical hashes and row counts to the baseline
+- `alert`  
+  - Missing or unexpected files, schema differences, or suspicious conditions
+
+On `ingest`:
+
+- `save_current_state(...)` writes 2 metadata files per CSV:
+  - `metadata/hashes/<file>.md5`: timestamp + hash
+  - `metadata/row_counts/<file>.rows`: total rows + data rows
+- `cleanup_temp_on_ingest(...)` deletes the oldest complete `data/temp/v*/` folder, keeping only recent versions.
+
+On `skip`:
+
+- No metadata is changed.
+- The new version folder stays in `data/temp/` as an auditable copy.
+- The log records that all files were identical to the baseline.
+
 ***
 
-## Repository Structure
+### Tooling
+
+- Python — core logic and orchestration
+- Kaggle API — dataset download + auth [kaggle](https://www.kaggle.com/docs/api)
+- dotenv — to manage `KAGGLE_USERNAME` / `KAGGLE_KEY`
+- Standard library (hashes, paths, logging) for reliability
+
+(Polars / Postgres / BigQuery are planned but not yet wired in.)
+
+***
+
+### Repository Structure
 
 ```text
 ETL-ProjectOne/
-├── src/                     # Python package: etl_project_package (core ETL logic)
+├── src/
 │   └── etl_project_package/
-│       ├── compare.py       # compare_and_decide, state comparison logic
-│       ├── main.py          # cron_run entrypoint
-│       ├── kaggle_connect.py# Kaggle download + dotenv auth
-│       └── ...              # other helpers (versioning, logging)
+│       ├── main.py            # cron_run entrypoint
+│       ├── compare.py         # compare_and_decide, state logic
+│       ├── kaggle_connect.py  # Kaggle download + auth helpers
+│       └── ...                # helpers (versioning, logging)
 ├── data/
-│   └── temp/                # Versioned raw snapshots (e.g. v1_nbadataset_temp_data/)
+│   └── temp/                  # Versioned raw Kaggle snapshots (vN_nbadataset_temp_data/)
 ├── metadata/
-│   ├── hashes/              # Per‑file hash baselines
-│   ├── row_counts/          # Per‑file row count baselines
-│   └── ingestion_log.md     # Append‑only Markdown audit log
-├── tests/                   # Pytest suite for functions and pipeline
-├── .env                     # Kaggle credentials (KAGGLE_USERNAME, KAGGLE_KEY)
-├── pyproject.toml           # Poetry configuration
-└── README.md                # This document
+│   ├── hashes/                # Per-file hash baseline (.md5)
+│   ├── row_counts/            # Per-file row count baseline (.rows)
+│   └── ingestion_log.md       # Markdown audit log per run
+├── .env                       # KAGGLE_USERNAME / KAGGLE_KEY
+├── pyproject.toml             # Poetry config
+└── README.md
 ```
 
 ***
 
-## Project Status
+### Current Status (What’s Implemented)
 
-### What is Implemented
-
-- **Kaggle Connectivity**
-  - Downloading the NBA dataset using the Kaggle Python API
-  - Authentication via `python-dotenv` and `.env` (no `kaggle.json` required)
-
-- **Change Detection Core**
-  - `compare_and_decide(project_root, version, data_path)`:
-    - Computes current file hashes, row counts, and schema
-    - Reads previous state from `metadata/`
-    - Applies rules to decide `ingest` / `skip` / `alert`
-    - Produces a rich `comparison_details` dictionary
-
-- **Logging and Audit Trail**
-  - `log_decision(decision, reason, comparison_details, project_root, version)`:
-    - Appends a human‑readable Markdown section to `metadata/ingestion_log.md`
-    - Includes file‑level comparison tables and run metadata
-    │   └── last_hash.txt Store hash for comparison
-
-
-- **Manual Testing**
-  - Manual runs via:
-    - `poetry run python -m etl_project_package.main`
-  - Verified:
-    - First run creates baseline and ingests
-    - Subsequent runs detect changes and write log entries
+- Reliable Kaggle download with:
+  - Auth via `.env` (`KAGGLE_USERNAME`, `KAGGLE_KEY`)
+  - Retry + basic validation (must find 7 CSVs)
+- Change detection:
+  - Per‑file MD5 hashes
+  - Per‑file row counts
+  - Optional schema comparison
+- Decision engine:
+  - `compare_and_decide(project_root, version, data_path)` returns `(decision, reason, details)`
+- Persistence:
+  - `save_current_state(...)` writes hashes + row counts into `metadata/`
+  - `read_previous_state(...)` reloads them on the next run
+- Logging:
+  - `log_decision(...)` appends a Markdown section for every run with:
+    - Summary (decision, reason, timestamp, version)
+    - Per‑file comparison table (previous vs current hash/rows)
+- Temp lifecycle:
+  - On `ingest`, delete the oldest complete version folder
+  - On `skip`, keep the new folder (for audit) but do not update metadata
 
 ***
 
-## What Still Needs Improvement / To‑Do
+### To‑Do / Roadmap
 
-### Data & Version Management
+Short‑term:
+- cron job
+- Add automated tests for:
+  - `next_local_version_name`
+  - `compare_and_decide` scenarios (baseline / skip / ingest / alert)
+  - `read_previous_*` and `save_current_state`
+- Add a simple CLI flag / config to control how many versions to retain under `data/temp/`.
 
-- **Cron‑style Entrypoint**
-  - `cron_run(project_root)`:
-    - Generates a new version name (e.g. `v2_nbadataset_temp_data`)
-    - Downloads the dataset into `data/temp/<version>/`
-    - Runs `compare_and_decide`
-    - Logs the decision
-    - Optionally cleans up older snapshot folders
+Medium‑term:
 
-- **Persist Previous State Correctly**
-  - Ensure `compare_and_decide` writes baseline hashes and row counts into `metadata/` after an ingest.
-  - Verify `read_previous_state` correctly reloads this metadata on the next run.
+- Package a Docker image for the ETL process
+- Add Airflow or another orchestrator instead of cron
+- Add a warehouse target (BigQuery) and model NBA facts/dimensions
 
-- **Version Folder Lifecycle**
-  - Finalize a clear policy for:
-    - When to delete old `data/temp/v*/` folders
-    - How many complete versions to retain
-    - How to handle incomplete or failed downloads
+Long‑term:
 
-### Error Handling & Robustness
-
-- **Kaggle Download Reliability**
-  - Harden `download_kaggle_dataset_to` with:
-    - Retries on transient failures
-    - Validation that expected CSV files exist (e.g. `Games.csv`, `Players.csv`, etc.)
-    - Clean removal of partially downloaded version folders on failure
-
-- **Compare & Ingest Logic**
-  - Refine rules so that:
-    - Purely expected seasonal updates can optionally be treated as `skip`
-    - Case differences or harmless file renames don’t cause false `ingest` results
-  - Add duplicate/unchanged snapshot detection to avoid unnecessary ingests.
-
-### Testing & Observability
-
-- **Automated Tests**
-  - Unit tests for:
-    - `next_local_version_name`
-    - `compare_and_decide` in different scenarios (baseline, no change, missing files, schema changes)
-    - `log_decision` (structure of Markdown output)
-  - Integration test:
-    - End‑to‑end `cron_run` using temporary directories and mocked Kaggle downloads.
-    - Data Snapshot update
-
-- **Developer Experience**
-  - Add example commands and expected output to help new contributors run:
-    - `poetry install`
-    - `poetry run pytest`
-    - `poetry run python -m etl_project_package.main`
+- FastAPI service for:
+  - Triggering runs
+  - Viewing latest decision/log
+  - Health checks
+- Use this dataset as a reliable source for downstream analytics / ML.
 
 ***
 
-## Later in the Process (Roadmap)
 
-- **Dockerization**
-  - Containerize the entire ETL system for reproducible deployments.
-
-- **Warehouse Modeling**
-  - Design and build dimensional or star schemas in Postgres/BigQuery using the ingested NBA data.
-
-- **APIs and Dynamic Orchestration**
-  - Introduce FastAPI or similar to:
-    - Trigger runs on demand
-    - Expose status and recent decisions
-    - Integrate with external schedulers beyond cron.
-
-- **ML & Analytics**
-  - Use the cleaned and versioned dataset as a source for:
-    - Predictive models
-    - Interactive dashboards
-    - Historical analyses that rely on trustworthy, repeatable ETL.
-
-***

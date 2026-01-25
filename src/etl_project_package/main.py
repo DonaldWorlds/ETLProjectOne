@@ -1,7 +1,8 @@
 import os
-from pathlib import Path 
-from .compare import get_data_path, compare_and_decide, log_decision
-from .kaggle_connect import download_kaggle_dataset_to, validate_downloaded_files
+from pathlib import Path
+from sys import meta_path 
+from .compare import get_data_path, compare_and_decide, log_decision, save_current_state, get_metadata_paths
+from .kaggle_connect import download_kaggle_dataset_to, validate_downloaded_files, get_kaggle_dataset_version,get_saved_kaggle_version,save_kaggle_version
 import shutil
 from datetime import datetime
 
@@ -53,64 +54,69 @@ def cleanup_temp_on_ingest(project_root: Path, current_version_path: Path) -> No
             complete_versions.append(version_folder)
     
     if len(complete_versions) <= 1:
-        print("ℹ️  Only 1 complete version, nothing to clean")
+        print("Only 1 complete version, nothing to clean")
         return
     
     # Sort by name (v1 < v2 < v3...), delete OLDEST
     complete_versions.sort(key=lambda p: p.name)
     oldest_version = complete_versions[0]
     
-    print(f"🗑️  INGEST detected → Deleting oldest version: {oldest_version.name}")
+    print(f"INGEST detected → Deleting oldest version: {oldest_version.name}")
     shutil.rmtree(oldest_version)
-    print(f"✅ Cleaned up {oldest_version.name}")
+    print(f"Cleaned up {oldest_version.name}")
 
     
 
 def cron_run(project_root: Path) -> None:
-    """Production cron: fail fast, cleanup failures, never leave empty folders"""
+    """Smart cron: Check Kaggle FIRST before downloading."""
     start_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    print(f"🚀 Cron started: {start_time}")
+    print(f"Cron started: {start_time}")
     
+    # 1. CHECK KAGGLE VERSION FIRST (no download yet)
+    print("Checking Kaggle dataset version...")
+    kaggle_version = get_kaggle_dataset_version()  # NEW FUNCTION
+    
+    # 2. COMPARE vs saved baseline version
+    saved_version = get_saved_kaggle_version(project_root)  # NEW FUNCTION
+    if kaggle_version == saved_version and saved_version is not None:
+        print(f"→ Kaggle unchanged (v{saved_version}) → SKIP download")
+        log_decision(
+            "skip", f"Kaggle dataset unchanged (version {saved_version})", 
+            {"timestamp": start_time}, project_root
+        )
+        return  # NO DOWNLOAD!
+    
+    # 3. Kaggle CHANGED → Download + full pipeline
+    print("→ Kaggle changed → Downloading...")
     version = next_local_version_name(project_root)
     data_path = get_data_path(project_root, version)
     
-    # CRITICAL: Don't create folder until we're SURE we can download
     try:
-        # 1. DOWNLOAD FIRST (with validation)
-        print(f"📥 Downloading to {data_path}...")
-        download_kaggle_dataset_to(data_path)  # Creates folder + validates
+        download_kaggle_dataset_to(data_path)
+        decision, reason, details = compare_and_decide(project_root, version, data_path)
+        metadata_paths = get_metadata_paths(project_root)
         
-        # 2. ONLY if download succeeded → compare
-        print("🔍 Comparing...")
-        decision, reason, comparison_details = compare_and_decide(
-            project_root=project_root, version=version, data_path=data_path
-        )
+        log_decision(decision, reason, details, project_root, version)
+        print(f"Decision: {decision} - {reason}")
         
-        # 3. Log result
-        log_decision(decision, reason, comparison_details, project_root, version)
-        print(f"✅ Decision: {decision} - {reason}")
-        
-        # 4. Cleanup only on ingest
         if decision == "ingest":
+            save_current_state(data_path, metadata_paths, details.get('current_state', {}))
+            print("✅ New baseline established!")
+            save_kaggle_version(project_root, kaggle_version)  # NEW
             cleanup_temp_on_ingest(project_root, data_path)
+        else:
+            print(f"{decision.upper()} → No persistence needed")
             
     except Exception as e:
-        print(f"❌ FATAL ERROR: {e}")
-        
-        # IMMEDIATE CLEANUP - NO EMPTY FOLDERS
+        print(f"FATAL ERROR: {e}")
         if data_path.exists():
             shutil.rmtree(data_path)
-            print(f"🗑️ Cleaned failed folder: {data_path.name}")
-        
-        # Log failure to ingestion_log
-        log_decision(
-            "alert", f"Cron failed: {str(e)}", 
-            {"timestamp": start_time, "error": str(e)}, 
-            project_root, version
-        )
+        log_decision("alert", f"Cron failed: {str(e)}", 
+                    {"timestamp": start_time, "error": str(e)}, project_root, version)
         raise
     
-    print("🎉 Cron completed successfully")
+    print("Cron completed successfully")
+
 
 
 
@@ -118,4 +124,6 @@ if __name__ == "__main__":
     PROJECT_ROOT = Path(__file__).resolve().parents[2]  # repo root, adjust if needed
     print(f"Project root: {PROJECT_ROOT}")
     cron_run(PROJECT_ROOT)
+
+    
 
